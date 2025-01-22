@@ -5,75 +5,63 @@
 from typing import List
 import numpy as np
 from scipy.ndimage import binary_fill_holes
-import trimesh
-import numpy as np
+
 from  trimesh.voxel.creation import voxelize
+import datetime
+import os
 
-def voxelize(path:str,output:str="./cache/default.npy")->np.ndarray:
-    '''
-    “体素化”，类似于把矢量图“像素化”，是把一个三维模型采样为一个三维数组，每个元素描述对应位置的“体素”是否与模型重合
-    从指定路径下读取场景文件，并将其采样，转化为高维数组，存储至输入数据缓存区（./cache）
-    @param path:str 场景文件的路径
-    @param output:str="./cache/default.npy" 存储.npy文件的路径和文件名
-    @return:np.ndarray 高维np数组的转化结果
-    '''
+##############################################################
+#               以下为工具函数/类（并非接口）                   #
+##############################################################
 
-    # 读取 .obj 文件
-    mesh = trimesh.load_mesh(path).to_mesh()
+class inference_info:
+    ###
+    # 用来装载准备时推理所需的数据，配有一个格式验证器
+    ###
+    start_locations:List
+    end_locations:List
+    actions:List
+    scene_path:str
+    scene_name:str
+    submitted_time:datetime.datetime
+    _is_submitted=False # 标记数据是否已经进入过队列
+    def is_valid(self)->bool:
+        msg=""
+        if (self.start_locations and self.end_locations and self.actions):
+            if not (len(self.start_locations)==len(self.end_locations)==len(self.actions)):
+                msg+=f"The length of start_locations, end_locations and actions should be equal, but the input being({len(self.start_locations)},{len(self.end_locations)},{len(self.actions)})\n"
+        else:
+            msg+="Following information is missing: "
+            if not self.start_locations:
+                msg+="start_locations, "
+            if not self.end_locations:
+                msg+="end_locations, "
+            if not self.actions:
+                msg+="actions, "
+            msg=msg[:-1]+".\n"
+        if not os.path.exists(self.scene_path):# 如果场景路径不存在
+            msg+=f"scene_path is provided as {self.scene_path} yet do not exist.\n"
+        else:
+            if os.path.isdir(self.scene_path):# 如果路径存在但是个目录
+                msg+=f"scene_path expects a file but {self.scene_path} points to a directory."
+            elif os.path.basename(self.scene_path)!=self.scene_name:# 如果路径存在，不是目录（是文件），检查路径和记录的场景名是否一致
+                msg+="Inconsistent scene_path and scene_name detected: the path is {self.scene_path} yet the name is {self.scene_name}.\n"
+        if (self._is_submitted and not self.submitted_time) or (not self._is_submitted and self.submitted_time): # 如果标记为已经上传却没有上传时间，或标记为还未上传却有上传时间
+            msg+="Inconsistent submit marker and submitted time detected: the marker is {self._is_submitted} yet the submitted time is {self.submitted_time}\n"
 
-    target_shape = (400, 100, 600)
+    def set_scene_path(self,path:str)->None:
+        #设置scene_path并根据path更新scene_name
+        #该方法继承basename的行为，并不检查路径的有效性
+        self.scene_path=path
+        self.scene_name=os.path.basename(path)
 
-    # 计算模型的长宽高
-    bounds_min, bounds_max = mesh.bounds
-    model_size = bounds_max - bounds_min  # 长宽高
-
-    # 计算每个维度的缩放因子，保持长宽高比
-    scaling_factors = np.array(target_shape) / model_size
-
-    # 取最小的缩放因子，以保证场景尺寸不超过目标尺寸
-    scaling_factor = min(scaling_factors)
-    # 目标体素尺寸
-
-    # 计算模型边界范围
-    bounds_min, bounds_max = mesh.bounds
-    model_size = bounds_max - bounds_min
-
-    # 计算缩放比例，使模型正好适配目标体素网格
-    scaling_factors = np.array(target_shape) / model_size
-    scaling_factor = min(scaling_factors)*0.995  # 保证模型按最小比例等比缩放
-
-    # 缩放模型
-    mesh.apply_scale(scaling_factor)
-    # 平移模型到体素网格中心
-    mesh.apply_translation(-mesh.bounds[0])  # 移动到原点
-    mesh.apply_translation([0,0.2,0])  # 移动到原点
-    grid_size = np.array(target_shape)
-    mesh.apply_translation(grid_size / 2 - model_size * scaling_factor / 2)
-
-    # # 体素化模型
-    # 将网格转换为体素网格
-    voxel_grid = voxelize(mesh,pitch=1) # pitch是体素的大小
-
-    # 获取体素网格的布尔值表示
-    voxel_grid = voxel_grid.matrix
-    np.save(output, voxel_grid)
-    return voxel_grid
-        
-    
-def prep_lingo_job(start_locations:List,end_locations:List,actions:List,output:str="./queue")->bool:
-    '''
-    接收模型的起始/终止位置以及行动提示词，并整理模型输入至“./queue”，等待作业队列系统处理。
-    @param start_locations:List 起始坐标列表
-    @param start_locations:List 终止坐标列表
-    @param start_locations:List 行动提示词列表
-    @return:bool 操作是否成功（相关输入是否齐全）
-    '''
-    assert len(start_locations)==len(end_locations)==len(actions) # 三项输入应当等长
-
-
-###############################################################
-#               以下为工具函数（并非接口）                      #
-###############################################################
+    def __set_submitted_time__(self)->None:
+        if not self._is_submitted:
+            self._is_submitted=True
+            self.submitted_time=datetime.datetime.now()
+        else:
+            raise ValueError(f"The submitted time has been set and value being {self.submitted_time}.")
+            
 
 def fill_voxel_matrix(original_matrix):
     """
