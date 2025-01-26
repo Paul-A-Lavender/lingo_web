@@ -5,7 +5,7 @@
 from typing import List
 import numpy as np
 from scipy.ndimage import binary_fill_holes
-
+import warnings
 from  trimesh.voxel.creation import voxelize
 import datetime
 import os
@@ -48,6 +48,11 @@ class inference_info:
                 msg+="Inconsistent scene_path and scene_name detected: the path is {self.scene_path} yet the name is {self.scene_name}.\n"
         if (self._is_submitted and not self.submitted_time) or (not self._is_submitted and self.submitted_time): # 如果标记为已经上传却没有上传时间，或标记为还未上传却有上传时间
             msg+="Inconsistent submit marker and submitted time detected: the marker is {self._is_submitted} yet the submitted time is {self.submitted_time}\n"
+        if len(msg)==0:
+            return True
+        else:
+            print(msg)
+            return False
 
     def set_scene_path(self,path:str)->None:
         #设置scene_path并根据path更新scene_name
@@ -55,13 +60,12 @@ class inference_info:
         self.scene_path=path
         self.scene_name=os.path.basename(path)
 
-    def __set_submitted_time__(self)->None:
-        if not self._is_submitted:
+    def __set_submitted_time__(self,overwrite=False)->None:
+        if not self._is_submitted or overwrite:
             self._is_submitted=True
             self.submitted_time=datetime.datetime.now()
         else:
-            raise ValueError(f"The submitted time has been set and value being {self.submitted_time}.")
-            
+            warnings(f"Operation aborted, as the submitted status is configured as {self._is_submitted} and submitted time being {self.submitted_time}.")      
 
 def fill_voxel_matrix(original_matrix):
     """
